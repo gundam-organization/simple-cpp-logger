@@ -165,14 +165,9 @@ namespace {
     if( once_ ){
       size_t instanceHash{(size_t) lineNumber_};
       LoggerUtils::hashCombine(instanceHash, fileName_);
-      if( _onceLogList_.find( instanceHash ) != _onceLogList_.end() ){
+      if( not _onceLogList_.insert(instanceHash).second ){
         // mute
         Logger::_currentLogLevel_ = LogLevel::INVALID;
-      }
-      else{
-        // will be printed only this time:
-        // dirty trick (better way??): get unique identifier out of file name and lineNumber.
-        _onceLogList_.insert( instanceHash );
       }
     }
   }
