@@ -93,7 +93,7 @@ int main(){
   LogWarning << "-> You can see me :) (but not the next message which is a DEBUG)" << std::endl;
   LogDebug << "-> You cannot see me :(" << std::endl;
   LogAlert << "* Note that Logger::setMaxLogLevel will only set the max log level for this source file." << std::endl;
-  LogAlert << "* This is because simple-cpp-logger is a header-only library." << std::endl;
+  LogAlert << "* Verbosity is kept in a context local to each source file." << std::endl;
   LogAlert << "* In fact, all (static) members of the Logger are defined within a given source file." << std::endl;
   LogAlert << "* To apply this parameter globally, set the variable in your cmake file." << std::endl;
   LogTrace.setMaxLogLevel();

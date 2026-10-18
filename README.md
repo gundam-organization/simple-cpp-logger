@@ -9,7 +9,7 @@
 
 This simple header-only library written in C++ provides logging features with handy options.
 Because it's written as a header-only library, you can easily add it to your current project. 
-A cmake example file is shipped within this repository.
+An optional compiled mode builds the implementation once in `SimpleCppLogger`, while keeping the same logging API.
 
 
 ## Features
@@ -43,7 +43,7 @@ make
 
 ## Requirements
 
-- **C++11 or higher is required to use this logger.**
+- **C++17 or higher is required to use this logger.**
 
 
 ## Getting Setup
@@ -54,6 +54,46 @@ In your CMakeLists.txt, add the following lines:
 
 ```cmake
 include_directories(path/to/simple-cpp-logger/include)
+```
+
+Alternatively, use the CMake target. Header-only mode is the default:
+
+```cmake
+add_subdirectory(path/to/simple-cpp-logger)
+target_link_libraries(MyApplication PRIVATE SimpleCppLogger)
+```
+
+To compile the implementation into a library:
+
+```cmake
+set(SIMPLE_CPP_LOGGER_COMPILED ON)
+add_subdirectory(path/to/simple-cpp-logger)
+target_link_libraries(MyApplication PRIVATE SimpleCppLogger)
+```
+
+`SIMPLE_CPP_LOGGER_BUILD_SHARED` selects a shared library; it defaults to
+`BUILD_SHARED_LIBS`. Otherwise the compiled library is static and can also be
+linked into shared libraries. The target propagates the include directory,
+C++17 requirement and `SIMPLE_CPP_LOGGER_COMPILED` definition to consumers.
+Without CMake, compile `src/Logger.cpp`, define `SIMPLE_CPP_LOGGER_COMPILED` for
+all consumers and link the resulting library. Use the same mode throughout
+one program.
+
+In compiled mode, non-template context and utility implementations are emitted
+only in `src/Logger.cpp`. The header retains the logging macros, templates and
+small facade. File names and line numbers still refer to the logging call site.
+Compile-time configuration is passed to each file's context, so local defaults
+continue to work in both modes.
+
+Examples and tests are built by default for standalone builds and disabled by
+default when included as a subdirectory. Enable them with
+`SIMPLE_CPP_LOGGER_BUILD_EXAMPLES` and `SIMPLE_CPP_LOGGER_BUILD_TESTS`.
+The tests exercise both modes:
+
+```bash
+cmake -S . -B build -DSIMPLE_CPP_LOGGER_COMPILED=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Preprocessor variables are defined in `Logger.h`, and can be changed by adding the following lines to CMakeLists.txt:
@@ -107,6 +147,25 @@ Logger::setMaxLogLevel(Logger::LogLevel::INFO);
 From this moment, all following Log calls will be printed if their associated log level is lower than `INFO`.
 This means that `LogFatal`, `LogError`, `LogAlert`, `LogWarning` and `LogInfo` will be printed, but `LogDebug` and `LogTrace` will be muted. 
 
-Keep in mind that every parameter you set this way will be only be applied for the current source file.
+Verbosity and prefix settings apply only to the current source file. Muting is shared across source files (see below).
 For a global effect, you need to set the associated preprocessor variables accordingly (cf. CMakeLists.txt).
 
+
+### Muting a scope
+
+Muting is shared across all source files in **both modes**, including dependencies
+that use this logger. Prefixes, user headers and verbosity remain local to each
+source file.
+
+```cpp
+{
+  Logger::ScopedMute muteLogger;
+  callDependencies(); // Their logs are muted too.
+} // Restore the previous mute state, including on exception.
+```
+
+Nested guards preserve an outer mute. `Logger::ScopedMute muteLogger{quiet};`
+only enables muting when `quiet` is true; it preserves an existing mute either
+way. `Logger::setIsMuted(true/false)` and `Logger::isMuted()` also use the shared
+state. A mute affects all threads; scoped guards restore the state they observed
+on entry and should be nested rather than overlap independently across threads.

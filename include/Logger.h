@@ -5,18 +5,12 @@
 #ifndef SIMPLE_CPP_LOGGER_LOGGER_H
 #define SIMPLE_CPP_LOGGER_LOGGER_H
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wunused-variable"
-
 #include "implementation/LoggerParameters.h"
-#include "implementation/LoggerUtils.h"
+#include "implementation/LoggerContext.h"
 
 #include <mutex>
 #include <string>
-#include <vector>
 #include <sstream>
-#include <unordered_set>
 
 
 // Here is what you want to use
@@ -81,205 +75,90 @@
 #define DEBUG_VAR(myVar) LogDebug << "DEBUG_VAR: " << GET_VAR_NAME_VALUE(myVar) << std::endl
 
 
-// Implementation
+// The facade and its context have internal linkage: settings remain local to
+// each translation unit in both modes. Muting is shared across all contexts.
 namespace {
 
   class Logger {
-
   public:
+    using LogLevel = LoggerDetail::LoggerContext::LogLevel;
+    using PrefixLevel = LoggerDetail::LoggerContext::PrefixLevel;
+    using ScopedMute = LoggerDetail::ScopedMute;
 
-    enum class LogLevel {
-      FATAL   = 0,
-      ERROR   = 1,
-      ALERT   = 2,
-      WARNING = 3,
-      INFO    = 4,
-      DEBUG   = 5,
-      TRACE   = 6,
-      INVALID = 7
+    static void setIsMuted(bool isMuted_){ _context_.setIsMuted(isMuted_); }
+    static void setEnableColors(bool enableColors_){ _context_.setEnableColors(enableColors_); }
+    static void setCleanLineBeforePrint(bool cleanLineBeforePrint_){ _context_.setCleanLineBeforePrint(cleanLineBeforePrint_); }
+    static void setPropagateColorsOnUserHeader(bool propagateColorsOnUserHeader_){ _context_.setPropagateColorsOnUserHeader(propagateColorsOnUserHeader_); }
+    static void setPrefixLevel(const PrefixLevel& prefixLevel_){ _context_.setPrefixLevel(prefixLevel_); }
+    static void setUserHeaderStr(const std::string& userHeaderStr_){ _context_.setUserHeaderStr(userHeaderStr_); }
+    static void setPrefixFormat(const std::string& prefixFormat_){ _context_.setPrefixFormat(prefixFormat_); }
+    static void setIndentStr(const std::string& indentStr_){ _context_.setIndentStr(indentStr_); }
+    static std::stringstream& getUserHeader(){ return _context_.getUserHeader(); }
+    static std::string indent(){ LogIndent; return {}; }
+    static std::string unIndent(){ LogUnIndent; return {}; }
+    static void setMaxLogLevel(const Logger&){ _context_.setMaxLogLevel(); }
+    static void setMaxLogLevel(){ _context_.setMaxLogLevel(); }
+    static void setMaxLogLevel(int maxLogLevel_){ setMaxLogLevel(static_cast<LogLevel>(maxLogLevel_)); }
+    static void setMaxLogLevel(const LogLevel& maxLogLevel_){ _context_.setMaxLogLevel(maxLogLevel_); }
+
+    static bool isCleanLineBeforePrint(){ return _context_.isCleanLineBeforePrint(); }
+    static bool isMuted(){ return _context_.isMuted(); }
+    static int getMaxLogLevelInt(){ return static_cast<int>(getMaxLogLevel()); }
+    static const LogLevel& getMaxLogLevel(){ return _context_.getMaxLogLevel(); }
+    static const std::string& getIndentStr(){ return _context_.getIndentStr(); }
+    static LoggerUtils::StreamBufferSupervisor* getStreamBufferSupervisorPtr(){ return _context_.getStreamBufferSupervisorPtr(); }
+    static std::string getPrefixString(){ return _context_.getPrefixString(); }
+    static std::string getPrefixString(const Logger&){ return getPrefixString(); }
+
+    static void triggerNewLine(){ _context_.triggerNewLine(); }
+    static void quietLineJump(){ _context_.quietLineJump(); }
+    static void moveTerminalCursorBack(int nLines_, bool clearLines_ = false){ _context_.moveTerminalCursorBack(nLines_, clearLines_); }
+    static void moveTerminalCursorForward(int nLines_, bool clearLines_ = false){ _context_.moveTerminalCursorForward(nLines_, clearLines_); }
+    static void clearLine(){ _context_.clearLine(); }
+    static void printNewLine(){ _context_.printNewLine(); }
+    static void throwError(const std::string& errorStr_ = ""){ _context_.throwError(errorStr_); }
+    static void triggerExit(const std::string& errorStr_ = ""){ _context_.triggerExit(errorStr_); }
+
+    Logger(LogLevel logLevel_, const char* fileName_, int lineNumber_, bool once_ = false)
+      : _lock_{_context_.getMutex()}{
+      _context_.startMessage(logLevel_, fileName_, lineNumber_, once_);
+    }
+
+    template<typename... Args> void operator()(const char* fmtStr_, Args&&... args_){
+      if( not _context_.isEnabled() ) return;
+      _context_.print(LoggerUtils::formatString(fmtStr_, std::forward<Args>(args_)...));
+      const auto length = std::strlen(fmtStr_);
+      if( length != 0 and fmtStr_[length - 1] != '\n' ) printNewLine();
+    }
+    template<typename T> Logger& operator<<(const T& data_){
+      if( not _context_.isEnabled() ) return *this;
+      std::stringstream dataStream;
+      dataStream << data_;
+      const auto message = dataStream.str();
+      if( not message.empty() ) _context_.print(message);
+      return *this;
+    }
+    Logger& operator<<(std::ostream& (*f_)(std::ostream&)){
+      _context_.printManipulator(f_);
+      return *this;
+    }
+    Logger& operator<<(Logger&){ return *this; }
+    Logger& operator()(bool condition_){ _context_.setCondition(condition_); return *this; }
+
+    struct ScopedIndent {
+      ScopedIndent(){ LogIndent; }
+      ~ScopedIndent(){ LogUnIndent; }
     };
-    enum class PrefixLevel {
-      NONE        = 0,
-      MINIMAL     = 1,
-      PRODUCTION  = 2,
-      DEBUG       = 3,
-      FULL        = 4
-    };
-
-    //! Setters
-    // Keep in mind that every parameter you set will be applied only in the context of the source file you're in
-    // It is an inherent feature as a **header-only** library
-    inline static void setIsMuted(bool isMuted_){ _isMuted_ = isMuted_; }
-    inline static void setEnableColors(bool enableColors_){ _enableColors_ = enableColors_; }
-    inline static void setCleanLineBeforePrint(bool cleanLineBeforePrint){ _cleanLineBeforePrint_ = cleanLineBeforePrint; }
-    inline static void setPropagateColorsOnUserHeader(bool propagateColorsOnUserHeader_){ _propagateColorsOnUserHeader_ = propagateColorsOnUserHeader_; }
-    inline static void setPrefixLevel(const PrefixLevel &prefixLevel_){ _prefixLevel_ = prefixLevel_; }
-    inline static void setUserHeaderStr(const std::string &userHeaderStr_){ _userHeaderSs_.str(userHeaderStr_); }
-    inline static void setPrefixFormat(const std::string &prefixFormat_){ _prefixFormat_ = prefixFormat_; }
-    inline static void setIndentStr(const std::string &indentStr_){ _indentStr_ = indentStr_; }
-    inline static std::stringstream& getUserHeader(){ return _userHeaderSs_; }
-    inline static std::string indent(){ LogIndent; return {}; }
-    inline static std::string unIndent(){ LogUnIndent; return {}; }
-    inline static void setMaxLogLevel(const Logger& logger_);  // Usage: Logger::setMaxLogLevel(LogDebug);
-    inline static void setMaxLogLevel();                       // Usage: LogDebug.setMaxLogLevel();
-
-    //! Getters
-    inline static bool isCleanLineBeforePrint(){ return _cleanLineBeforePrint_; }
-    inline static bool isMuted(){ return _isMuted_; }
-    inline static int getMaxLogLevelInt(){ return static_cast<int>(_maxLogLevel_); }
-    inline static const std::string& getIndentStr(){ return _indentStr_; }
-    inline static const LogLevel & getMaxLogLevel(){ return _maxLogLevel_; }
-    inline static LoggerUtils::StreamBufferSupervisor *getStreamBufferSupervisorPtr(){ return _streamBufferSupervisorPtr_; }
-    inline static std::string getPrefixString();                                // LogWarning.getPrefixString()
-    inline static std::string getPrefixString(const Logger& loggerConstructor); // Logger::getPrefixString(LogWarning)
-
-    //! Misc
-    inline static void triggerNewLine(){ _isNewLine_ = true; }
-    inline static void quietLineJump();
-    inline static void moveTerminalCursorBack(int nLines_, bool clearLines_ = false );
-    inline static void moveTerminalCursorForward(int nLines_, bool clearLines_ = false );
-    inline static void clearLine();
-    inline static void printNewLine();
-
-    //! Non-static Methods
-    // For printf-style calls
-    template <typename... TT> inline void operator()(const char *fmt_str, TT && ... args);
-    // For std::cout-style calls
-    template<typename T> inline Logger &operator<<(const T &data);
-    inline Logger &operator<<(std::ostream &(*f)(std::ostream &));
-    inline Logger &operator<<(Logger& l_);
-    inline Logger &operator()(bool condition_);
-
-    // Macro-Related Methods
-    // Those intended to be called using the above preprocessor macros
-    inline Logger(LogLevel logLevel_, char const * fileName_, int lineNumber_, bool once_=false);
-
-    inline static void throwError(const std::string& errorStr_ = "");
-    inline static void triggerExit(const std::string& errorStr_ = "");
-
-    // Deprecated (left here for compatibility)
-    inline static void setMaxLogLevel(int maxLogLevel_);
-    inline static void setMaxLogLevel(const LogLevel &maxLogLevel_);
-
-  protected:
-
-    inline static void buildCurrentPrefix();
-    inline static void generateUserHeader(std::string &strBuffer_);
-    inline static std::string generateUserHeader(){ std::string out{}; generateUserHeader(out); return out; }
-    inline static std::string getLogLevelColorStr(const LogLevel &selectedLogLevel_);
-    inline static std::string getLogLevelStr(const LogLevel &selectedLogLevel_);
-    template<typename ... Args> inline static void printFormat(const char *fmt_str, Args ... args );
-
-    // Setup Methods
-    inline static void setupStreamBufferSupervisor();
-    inline static void setupOutputFile();
 
   private:
-
-#if HAS_CPP_17
-    // C++17 code
-
-    // parameters
-    static inline bool _enableColors_{LOGGER_ENABLE_COLORS};
-    static inline bool _disablePrintfLineJump_{false};
-    static inline bool _propagateColorsOnUserHeader_{LOGGER_ENABLE_COLORS_ON_USER_HEADER};
-    static inline bool _cleanLineBeforePrint_{LOGGER_WRITE_OUTFILE};
-    static inline bool _writeInOutputFile_{false};
-    static inline bool _isMuted_{false};
-    static inline std::string _prefixFormat_{};
-    static inline std::string _indentStr_{};
-    static inline std::stringstream _userHeaderSs_{};
-    static inline LogLevel _maxLogLevel_{static_cast<Logger::LogLevel>(LOGGER_MAX_LOG_LEVEL_PRINTED)};
-    static inline PrefixLevel _prefixLevel_{static_cast<Logger::PrefixLevel>(LOGGER_PREFIX_LEVEL)};
-
-    // internal
-    static inline bool _isNewLine_{true};
-    static inline int _currentLineNumber_{-1};
-    static inline std::string _currentFileName_{};
-    static inline std::string _currentPrefix_{};
-    static inline std::string _outputFileName_{};
-    static inline std::mutex _loggerMutex_{};
-    static inline std::unordered_set<size_t> _onceLogList_{};
-    static inline LogLevel _currentLogLevel_{Logger::LogLevel::TRACE};
-    static inline LoggerUtils::StreamBufferSupervisor* _streamBufferSupervisorPtr_{nullptr};
-    static inline LoggerUtils::StreamBufferSupervisor _streamBufferSupervisor_;
-
-    // non-static
-    std::scoped_lock<std::mutex> _lock_{_loggerMutex_}; // one logger can be created at a given time
-#else
-    // parameters
-    static bool _enableColors_;
-    static bool _disablePrintfLineJump_;
-    static bool _propagateColorsOnUserHeader_;
-    static bool _cleanLineBeforePrint_;
-    static bool _writeInOutputFile_;
-    static bool _isMuted_;
-    static std::string _prefixFormat_;
-    static std::string _indentStr_;
-    static std::stringstream _userHeaderSs_;
-    static LogLevel _maxLogLevel_;
-    static PrefixLevel _prefixLevel_;
-
-    // internal
-    static bool _isNewLine_;
-    static int _currentLineNumber_;
-    static std::string _currentFileName_;
-    static std::string _currentPrefix_;
-    static std::string _outputFileName_;
-    static std::mutex _loggerMutex_;
-    static std::unordered_set<size_t> _onceLogList_;
-    static LogLevel _currentLogLevel_;
-    static LoggerUtils::StreamBufferSupervisor* _streamBufferSupervisorPtr_;
-    static LoggerUtils::StreamBufferSupervisor _streamBufferSupervisor_;
-
-    // non-static
-    std::lock_guard<std::mutex> _lock_{_loggerMutex_};
-#endif
-
-  public:
-    struct ScopedIndent{
-      inline ScopedIndent(){ LogIndent; }
-      inline ~ScopedIndent(){ LogUnIndent; }
-    };
-
+    static inline LoggerDetail::LoggerContext _context_{LoggerDetail::LoggerSettings{
+      LOGGER_ENABLE_COLORS, LOGGER_ENABLE_COLORS_ON_USER_HEADER, LOGGER_WRITE_OUTFILE,
+      LOGGER_MAX_LOG_LEVEL_PRINTED, LOGGER_PREFIX_LEVEL, LOGGER_PREFIX_FORMAT,
+      LOGGER_TIME_FORMAT, LOGGER_OUTFILE_FOLDER, LOGGER_OUTFILE_NAME_FORMAT
+    }};
+    std::scoped_lock<std::mutex> _lock_;
   };
-
-
-#if HAS_CPP_17
-#else
-  // Out of line declaration of non-const static variable (before C++17 -> now "inline" member work)
-  // Need to declare even default init variables to avoid warning "has internal linkage but is not defined"
-
-  // parameters
-  bool Logger::_enableColors_{LOGGER_ENABLE_COLORS};
-  bool Logger::_propagateColorsOnUserHeader_{LOGGER_ENABLE_COLORS_ON_USER_HEADER};
-  bool Logger::_cleanLineBeforePrint_{LOGGER_WRITE_OUTFILE};
-  bool Logger::_disablePrintfLineJump_{false};
-  bool Logger::_writeInOutputFile_{false};
-  bool Logger::_isMuted_{false};
-  Logger::LogLevel Logger::_maxLogLevel_{static_cast<Logger::LogLevel>(LOGGER_MAX_LOG_LEVEL_PRINTED)};
-  Logger::PrefixLevel Logger::_prefixLevel_{static_cast<Logger::PrefixLevel>(LOGGER_PREFIX_LEVEL)};
-  std::stringstream Logger::_userHeaderSs_{};
-  std::string Logger::_prefixFormat_{};
-  std::string Logger::_indentStr_{};
-
-  // internal
-  bool Logger::_isNewLine_{true};
-  int Logger::_currentLineNumber_{-1};
-  std::string Logger::_currentFileName_{};
-  std::string Logger::_currentPrefix_{};
-  std::string Logger::_outputFileName_{};
-  std::mutex Logger::_loggerMutex_{};
-  LoggerUtils::StreamBufferSupervisor* Logger::_streamBufferSupervisorPtr_{nullptr};
-  LoggerUtils::StreamBufferSupervisor Logger::_streamBufferSupervisor_{};
-  Logger::LogLevel Logger::_currentLogLevel_{Logger::LogLevel::TRACE};
-  std::unordered_set<size_t> Logger::_onceLogList_{};
-
-
-#endif
 
 }
 
-#include "implementation/Logger.impl.h"
-
-#endif //SIMPLE_CPP_LOGGER_LOGGER_H
+#endif // SIMPLE_CPP_LOGGER_LOGGER_H

@@ -1,4 +1,7 @@
-// Build and run with -std=c++14 and -std=c++17, -Iinclude and -pthread.
+// Exercise the same logging API in header-only and compiled C++17 modes.
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "Logger.h"
 
 #include <cassert>

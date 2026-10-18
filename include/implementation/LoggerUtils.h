@@ -7,6 +7,10 @@
 
 #include "LoggerMacros.h"
 
+#include <cstdio>
+#include <memory>
+#include <stdexcept>
+#include <utility>
 #include <thread>
 #include <vector>
 #include <string>
@@ -75,21 +79,27 @@ namespace LoggerUtils{
   };
 
   //! String Utils
-  inline bool doesStringContainsSubstring(const std::string &string_, const std::string &substring_, bool ignoreCase_ = false);
-  inline std::string padString(const std::string& inputStr_, const unsigned int &padSize_, const char& padChar = ' ');
-  inline std::string toLowerCase(const std::string &inputStr_);
-  inline std::string stripStringUnicode(const std::string &inputStr_);
-  inline std::string repeatString(const std::string &inputStr_, int amount_);
-  inline std::vector<std::string> splitString(const std::string& input_string_, const std::string& delimiter_);
-  inline std::string formatString( const std::string& strToFormat_ ); // 0 args overrider
-  template<typename ... Args> inline std::string formatString( const std::string& strToFormat_, const Args& ... args );
+  SIMPLE_CPP_LOGGER_INLINE bool doesStringContainsSubstring(const std::string &string_, const std::string &substring_, bool ignoreCase_ = false);
+  SIMPLE_CPP_LOGGER_INLINE std::string padString(const std::string& inputStr_, const unsigned int &padSize_, const char& padChar = ' ');
+  SIMPLE_CPP_LOGGER_INLINE std::string toLowerCase(const std::string &inputStr_);
+  SIMPLE_CPP_LOGGER_INLINE std::string stripStringUnicode(const std::string &inputStr_);
+  SIMPLE_CPP_LOGGER_INLINE std::string repeatString(const std::string &inputStr_, int amount_);
+  SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> splitString(const std::string& input_string_, const std::string& delimiter_);
+  SIMPLE_CPP_LOGGER_INLINE std::string formatString( const std::string& strToFormat_ ); // 0 args overrider
+  template<typename ... Args> inline std::string formatString( const std::string& strToFormat_, const Args& ... args ) {
+    size_t size = snprintf(nullptr, 0, strToFormat_.c_str(), args ...) + 1; // Extra space for '\0'
+    if (size <= 0) { throw std::runtime_error("Error during formatting."); }
+    std::unique_ptr<char[]> buf(new char[size]);
+    snprintf(buf.get(), size, strToFormat_.c_str(), args ...);
+    return {buf.get(), buf.get() + size - 1}; // We don't want the '\0' inside
+  }
 
-  inline void removeRepeatedCharInsideInputStr(std::string &inputStr_, const std::string &doubledChar_);
-  inline void replaceSubstringInsideInputString(std::string &input_str_, const std::string &substr_to_look_for_, const std::string &substr_to_replace_);
+  SIMPLE_CPP_LOGGER_INLINE void removeRepeatedCharInsideInputStr(std::string &inputStr_, const std::string &doubledChar_);
+  SIMPLE_CPP_LOGGER_INLINE void replaceSubstringInsideInputString(std::string &input_str_, const std::string &substr_to_look_for_, const std::string &substr_to_replace_);
 
   // Hardware Utils
-  inline int getTerminalWidth();
-  inline std::string getExecutableName();
+  SIMPLE_CPP_LOGGER_INLINE int getTerminalWidth();
+  SIMPLE_CPP_LOGGER_INLINE std::string getExecutableName();
 
   // hash Utils
   template <class T> inline void hashCombine(std::size_t& seed, const T& v) {
@@ -99,4 +109,6 @@ namespace LoggerUtils{
 
 }
 
+#ifndef SIMPLE_CPP_LOGGER_COMPILED
 #include "LoggerUtils.impl.h"
+#endif

@@ -4,6 +4,18 @@
 
 #pragma once
 
+#include <cstring>
+
+#if __cplusplus < 201703L
+#error "simple-cpp-logger requires C++17 or newer"
+#endif
+
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+#define SIMPLE_CPP_LOGGER_INLINE
+#else
+#define SIMPLE_CPP_LOGGER_INLINE inline
+#endif
+
 
 #ifndef HAS_CPP_17
 #define HAS_CPP_17 (__cplusplus >= 201703L)
@@ -65,4 +77,19 @@
 #define LOGGER_STR_COLOR_MAGENTA_BG "\x1b[45m"
 #define LOGGER_STR_COLOR_CYAN_BG    "\x1b[46m"
 #define LOGGER_STR_COLOR_GREY_BG    "\x1b[47m"
+
+
+// Strip the path at the call site in either build mode.
+#define FILENAME (std::strrchr(__FILE__, '/') ? std::strrchr(__FILE__, '/') + 1 : __FILE__)
+
+#define LoggerInitializerImpl( lambdaInit ) \
+  static void* MAKE_VARNAME_LINE(LoggerInitPlaceHolder) = []{ \
+    try{ lambdaInit(); }         \
+    catch( ... ){                  \
+      if (Logger::getStreamBufferSupervisorPtr() != nullptr) Logger::getStreamBufferSupervisorPtr()->flush(); \
+      std::cerr << "Error occurred during LoggerInit within the lamda instruction. Please check." << std::endl; \
+      throw std::runtime_error("Error occurred during LoggerInit"); \
+    } \
+    return nullptr; \
+  }()
 

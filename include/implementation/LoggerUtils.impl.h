@@ -5,6 +5,9 @@
 #ifndef SIMPLE_CPP_LOGGER_LOGGERUTILS_IMPL_H
 #define SIMPLE_CPP_LOGGER_LOGGERUTILS_IMPL_H
 
+#include "LoggerUtils.h"
+
+#include <cctype>
 #include <cmath>
 #include <vector>
 #include <string>
@@ -27,7 +30,6 @@
 #include <sys/resource.h>
 #include <mach/mach.h>
 #include <sys/ioctl.h>
-#include <Logger.h>
 
 #elif defined(__linux__) || defined(__linux) || defined(linux) || defined(__gnu_linux__)
 // Linux
@@ -53,14 +55,12 @@
 #include <cstdlib>
 extern char* __progname;
 
-// stripping the full path
-#define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
 // Implementation:
 namespace LoggerUtils{
 
 // String Utils
-  inline bool doesStringContainsSubstring(const std::string &string_, const std::string &substring_, bool ignoreCase_){
+  SIMPLE_CPP_LOGGER_INLINE bool doesStringContainsSubstring(const std::string &string_, const std::string &substring_, bool ignoreCase_){
     if(substring_.size() > string_.size()) return false;
     if(ignoreCase_){
       if(toLowerCase(string_).find(toLowerCase(substring_)) != std::string::npos){
@@ -72,7 +72,7 @@ namespace LoggerUtils{
     }
     return false;
   }
-  inline std::string padString(const std::string& inputStr_, const unsigned int &padSize_, const char& padChar){
+  SIMPLE_CPP_LOGGER_INLINE std::string padString(const std::string& inputStr_, const unsigned int &padSize_, const char& padChar){
     std::string outputString;
     int padDelta = int(inputStr_.size()) - int(padSize_);
     while( padDelta < 0 ){
@@ -83,13 +83,13 @@ namespace LoggerUtils{
     outputString += inputStr_;
     return outputString.substr(0, outputString.size() - padDelta);
   }
-  inline std::string toLowerCase(const std::string &inputStr_){
+  SIMPLE_CPP_LOGGER_INLINE std::string toLowerCase(const std::string &inputStr_){
     std::string output_str(inputStr_);
     std::transform(output_str.begin(), output_str.end(), output_str.begin(),
                    [](unsigned char c) { return std::tolower(c); });
     return output_str;
   }
-  inline std::string stripStringUnicode(const std::string &inputStr_){
+  SIMPLE_CPP_LOGGER_INLINE std::string stripStringUnicode(const std::string &inputStr_){
     std::string outputStr(inputStr_);
 
     if(LoggerUtils::doesStringContainsSubstring(outputStr, "\033")){
@@ -128,7 +128,7 @@ namespace LoggerUtils{
 
     return outputStr;
   }
-  inline std::string repeatString(const std::string &inputStr_, int amount_){
+  SIMPLE_CPP_LOGGER_INLINE std::string repeatString(const std::string &inputStr_, int amount_){
     std::string outputStr;
     if(amount_ <= 0) return outputStr;
     for(int i_count = 0 ; i_count < amount_ ; i_count++){
@@ -136,7 +136,7 @@ namespace LoggerUtils{
     }
     return outputStr;
   }
-  inline void removeRepeatedCharInsideInputStr(std::string &inputStr_, const std::string &doubledChar_){
+  SIMPLE_CPP_LOGGER_INLINE void removeRepeatedCharInsideInputStr(std::string &inputStr_, const std::string &doubledChar_){
     std::string doubledCharStr = doubledChar_+doubledChar_;
     std::string lastStr;
     do{
@@ -144,14 +144,14 @@ namespace LoggerUtils{
       LoggerUtils::replaceSubstringInsideInputString(inputStr_, doubledCharStr, doubledChar_);
     } while( lastStr != inputStr_ );
   }
-  inline void replaceSubstringInsideInputString(std::string &input_str_, const std::string &substr_to_look_for_, const std::string &substr_to_replace_){
+  SIMPLE_CPP_LOGGER_INLINE void replaceSubstringInsideInputString(std::string &input_str_, const std::string &substr_to_look_for_, const std::string &substr_to_replace_){
     size_t index = 0;
     while ((index = input_str_.find(substr_to_look_for_, index)) != std::string::npos) {
       input_str_.replace(index, substr_to_look_for_.length(), substr_to_replace_);
       index += substr_to_replace_.length();
     }
   }
-  inline std::vector<std::string> splitString(const std::string& input_string_, const std::string& delimiter_) {
+  SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> splitString(const std::string& input_string_, const std::string& delimiter_) {
 
     std::vector<std::string> output_split_string;
 
@@ -180,19 +180,11 @@ namespace LoggerUtils{
     return output_split_string;
 
   }
-  inline std::string formatString( const std::string& strToFormat_ ){
+  SIMPLE_CPP_LOGGER_INLINE std::string formatString( const std::string& strToFormat_ ){
     return strToFormat_;
   }
-  template<typename ... Args> inline std::string formatString( const std::string& strToFormat_, const Args& ... args ) {
-    size_t size = snprintf(nullptr, 0, strToFormat_.c_str(), args ...) + 1; // Extra space for '\0'
-    if (size <= 0) { throw std::runtime_error("Error during formatting."); }
-    std::unique_ptr<char[]> buf(new char[size]);
-    snprintf(buf.get(), size, strToFormat_.c_str(), args ...);
-    return {buf.get(), buf.get() + size - 1}; // We don't want the '\0' inside
-  }
-
   // Hardware related tools
-  inline int getTerminalWidth(){
+  SIMPLE_CPP_LOGGER_INLINE int getTerminalWidth(){
     int outWith;
 #if defined(_WIN32)
     CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -209,7 +201,7 @@ namespace LoggerUtils{
 #endif // Windows/Linux
     return outWith;
   }
-  inline std::string getExecutableName(){
+  SIMPLE_CPP_LOGGER_INLINE std::string getExecutableName(){
     std::string outStr;
 #if defined(__linux__) || defined(__linux) || defined(linux) || defined(__gnu_linux__) //check defines for your setup
     std::ifstream("/proc/self/comm") >> outStr;
