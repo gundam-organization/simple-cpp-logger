@@ -19,11 +19,19 @@
 
 #if defined(_WIN32)
 // Windows
-#include <windows.h>
-#include <psapi.h>
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#define VC_EXTRALEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+// Only console APIs are needed; wingdi.h defines ERROR, which conflicts
+// with LoggerContext::LogLevel::ERROR.
+#ifndef NOGDI
+#define NOGDI
+#endif
 #include <Windows.h>
+#include <psapi.h>
 #elif defined(__APPLE__) && defined(__MACH__)
 // MacOS
 #include <unistd.h>
