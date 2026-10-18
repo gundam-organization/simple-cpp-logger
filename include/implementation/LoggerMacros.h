@@ -6,6 +6,12 @@
 
 #include <cstring>
 
+#if defined(_MSC_VER)
+#define SIMPLE_CPP_LOGGER_FUNCTION_SIGNATURE __FUNCSIG__
+#else
+#define SIMPLE_CPP_LOGGER_FUNCTION_SIGNATURE __PRETTY_FUNCTION__
+#endif
+
 #if __cplusplus < 201703L
 #error "simple-cpp-logger requires C++17 or newer"
 #endif
