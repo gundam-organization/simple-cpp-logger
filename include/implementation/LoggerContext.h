@@ -3,12 +3,30 @@
 #include "LoggerUtils.h"
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <unordered_set>
 
 namespace LoggerDetail {
+
+  // Runs on the registering thread before LogExit terminates the process.
+  class ScopedExitHandler {
+  public:
+    SIMPLE_CPP_LOGGER_INLINE explicit ScopedExitHandler(std::function<void()> handler_);
+    SIMPLE_CPP_LOGGER_INLINE ~ScopedExitHandler();
+    ScopedExitHandler(const ScopedExitHandler&) = delete;
+    ScopedExitHandler& operator=(const ScopedExitHandler&) = delete;
+
+  private:
+    friend class LoggerContext;
+    static SIMPLE_CPP_LOGGER_INLINE ScopedExitHandler*& current();
+    static SIMPLE_CPP_LOGGER_INLINE void invoke();
+
+    std::function<void()> _handler_;
+    ScopedExitHandler* _previous_{nullptr};
+  };
 
   // Values come from the including translation unit, even in compiled mode.
   // Keep macro-dependent defaults out of types with external linkage.

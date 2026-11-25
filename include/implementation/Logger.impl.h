@@ -28,6 +28,23 @@
 
 namespace LoggerDetail {
 
+  SIMPLE_CPP_LOGGER_INLINE ScopedExitHandler*& ScopedExitHandler::current(){
+    static thread_local ScopedExitHandler* handler{nullptr};
+    return handler;
+  }
+  SIMPLE_CPP_LOGGER_INLINE ScopedExitHandler::ScopedExitHandler(std::function<void()> handler_)
+    : _handler_(std::move(handler_)), _previous_(current()){
+    current() = this;
+  }
+  SIMPLE_CPP_LOGGER_INLINE ScopedExitHandler::~ScopedExitHandler(){
+    auto** link = &current();
+    while( *link != nullptr and *link != this ) link = &(*link)->_previous_;
+    if( *link == this ) *link = _previous_;
+  }
+  SIMPLE_CPP_LOGGER_INLINE void ScopedExitHandler::invoke(){
+    if( auto* handler = std::exchange(current(), nullptr) ) handler->_handler_();
+  }
+
   SIMPLE_CPP_LOGGER_INLINE LoggerContext::LoggerContext(LoggerSettings settings_)
     : _settings_{std::move(settings_)}{}
 
@@ -129,6 +146,15 @@ namespace LoggerDetail {
   SIMPLE_CPP_LOGGER_INLINE void LoggerContext::triggerExit( const std::string& errorStr_ ){
     std::cout << "std::exit() called by the logger at " << _currentFileName_ << ":" << _currentLineNumber_;
     std::cout << (errorStr_.empty()? "." : ": " + errorStr_) << std::endl;
+    try{
+      ScopedExitHandler::invoke();
+    }
+    catch( const std::exception& error_ ){
+      std::cerr << "Logger exit handler failed: " << error_.what() << std::endl;
+    }
+    catch(...){
+      std::cerr << "Logger exit handler failed." << std::endl;
+    }
     std::exit( EXIT_FAILURE );
   }
 
