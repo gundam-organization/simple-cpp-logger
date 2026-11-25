@@ -19,6 +19,7 @@
 #include <functional>
 #ifdef SIMPLE_CPP_LOGGER_COMPILED
 #include <atomic>
+#include <deque>
 #include <mutex>
 #endif
 
@@ -27,12 +28,14 @@
 namespace LoggerUtils{
 
 #ifdef SIMPLE_CPP_LOGGER_COMPILED
-  // Capture explicit logger output shared across translation units.
+  // Mirror the C++ console streams in a shared capture.
   class StreamCapture {
   public:
     SIMPLE_CPP_LOGGER_INLINE StreamCapture();
     SIMPLE_CPP_LOGGER_INLINE ~StreamCapture();
     SIMPLE_CPP_LOGGER_INLINE std::string finish();
+    SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> drain(std::size_t keepLines_, std::size_t batchSize_);
+    SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> finishLines();
 
   private:
     friend class StreamBufferSupervisor;
@@ -40,40 +43,50 @@ namespace LoggerUtils{
     class CaptureBuffer : public std::streambuf {
     public:
       std::string str() const;
+      std::size_t size() const { return _lines_.size(); }
+      std::vector<std::string> drain(std::size_t keepLines_, std::size_t batchSize_);
+      std::vector<std::string> finishLines();
 
     protected:
       int_type overflow(int_type value_) override;
+      std::streamsize xsputn(const char* data_, std::streamsize size_) override;
 
     private:
       enum class State { Text, Escape, ControlSequence };
       void applyControlSequence(char command_);
 
-      std::vector<std::string> _lines_{1};
+      std::deque<std::string> _lines_{1};
       std::size_t _line_{0};
       bool _replaceLine_{false};
       State _state_{State::Text};
       std::string _parameters_;
     };
 
+    class ConsoleBuffer : public std::streambuf {
+    public:
+      void attach(std::ostream& stream_);
+      void detach(std::ostream& stream_);
+
+    protected:
+      int_type overflow(int_type value_) override;
+      std::streamsize xsputn(const char* data_, std::streamsize size_) override;
+      int sync() override;
+
+    private:
+      static std::streambuf** downstreamLink(std::streambuf* buffer_);
+      std::streambuf* _downstream_{nullptr};
+    };
     struct CaptureRegistry {
-      std::atomic<bool> hasCaptures{false};
       std::mutex mutex;
       std::vector<StreamCapture*> captures;
+      ConsoleBuffer output;
+      ConsoleBuffer error;
     };
     static SIMPLE_CPP_LOGGER_INLINE CaptureRegistry& registry();
     SIMPLE_CPP_LOGGER_INLINE void detach();
 
-    template<typename T> static void copy(const T& value_){
-      auto& active = registry();
-      if( not active.hasCaptures.load(std::memory_order_acquire) ) return;
-      std::lock_guard<std::mutex> lock(active.mutex);
-      for( auto* capture : active.captures ){
-        capture->_stream_ << value_;
-      }
-    }
-
     CaptureBuffer _buffer_;
-    std::ostream _stream_{&_buffer_};
+    std::atomic<std::size_t> _lineCount_{1};
   };
 #endif
 
@@ -119,17 +132,11 @@ namespace LoggerUtils{
     template<typename T> StreamBufferSupervisor& operator<<(const T& something){
       (*_outputStream_) << something;
       if( _outFileStream_.is_open() ) _outFileStream_ << something;
-#ifdef SIMPLE_CPP_LOGGER_COMPILED
-      StreamCapture::copy(something);
-#endif
       return *this;
     }
     StreamBufferSupervisor &operator<<(std::ostream &(*f)(std::ostream &)){
       (*_outputStream_) << f;
       if( _outFileStream_.is_open() ) _outFileStream_ << f;
-#ifdef SIMPLE_CPP_LOGGER_COMPILED
-      StreamCapture::copy(f);
-#endif
       return *this;
     }
     StreamBufferSupervisor &flush(){
@@ -139,6 +146,9 @@ namespace LoggerUtils{
     }
 
   private:
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+    friend class StreamCapture::ConsoleBuffer;
+#endif
     std::streambuf* _streamBufferPtr_{nullptr};
     std::ofstream _outFileStream_;
     std::ostream* _outputStream_ = &std::cout;

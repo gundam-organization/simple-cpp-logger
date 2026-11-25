@@ -43,7 +43,14 @@ int main(){
   *supervisor << '\033' << "[" << 2 << "F" << "\033[2K";
   *supervisor << "\033[32mnew first row\033[0m\nnew second row\n";
   *supervisor << "done" << std::endl;
-  assert(capture.finish() == "heading\nprogress 100%\nnew first row\nnew second row\ndone\n");
+  std::cout << "stdout\n";
+  std::cerr << "stderr\n";
+  assert(capture.drain(5, 4).empty());
+  const std::vector<std::string> expectedBatch{"heading", "progress 100%", "new first row"};
+  assert(capture.drain(5, 3) == expectedBatch);
+  std::cout << "\033[2F" << "updated stdout\n\033[1E";
+  const std::vector<std::string> expectedTail{"new second row", "done", "updated stdout", "stderr"};
+  assert(capture.finishLines() == expectedTail);
   supervisor->setStreamBuffer(std::cerr.rdbuf());
 #endif
 }

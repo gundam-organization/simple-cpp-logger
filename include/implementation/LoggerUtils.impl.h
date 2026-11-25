@@ -19,8 +19,28 @@
 
 #ifdef SIMPLE_CPP_LOGGER_COMPILED
 #include <charconv>
+#include <iterator>
+#include <string_view>
 
 namespace LoggerUtils {
+  std::vector<std::string> StreamCapture::CaptureBuffer::drain(std::size_t keepLines_, std::size_t batchSize_){
+    const auto count = std::min(_line_, _lines_.size() - std::min(keepLines_, _lines_.size()));
+    if( count < batchSize_ ) return {};
+    std::vector<std::string> lines;
+    lines.reserve(count);
+    for( std::size_t i = 0; i < count; ++i ){
+      lines.emplace_back(std::move(_lines_.front()));
+      _lines_.pop_front();
+    }
+    _line_ -= count;
+    return lines;
+  }
+
+  std::vector<std::string> StreamCapture::CaptureBuffer::finishLines(){
+    if( _lines_.back().empty() ) _lines_.pop_back();
+    return {std::make_move_iterator(_lines_.begin()), std::make_move_iterator(_lines_.end())};
+  }
+
   std::string StreamCapture::CaptureBuffer::str() const{
     std::string result;
     for( const auto& line : _lines_ ){
@@ -67,6 +87,27 @@ namespace LoggerUtils {
     return value_;
   }
 
+  std::streamsize StreamCapture::CaptureBuffer::xsputn(const char* data_, std::streamsize size_){
+    if( size_ <= 0 ) return 0;
+    std::string_view text(data_, static_cast<std::size_t>(size_));
+    while( not text.empty() ){
+      if( _state_ != State::Text or text.front() == '\r' or text.front() == '\n' or text.front() == '\033' ){
+        overflow(traits_type::to_int_type(text.front()));
+        text.remove_prefix(1);
+        continue;
+      }
+      const auto count = std::min(text.find_first_of("\r\n\033"), text.size());
+      auto& line = _lines_[_line_];
+      if( _replaceLine_ ){
+        line.clear();
+        _replaceLine_ = false;
+      }
+      line.append(text.data(), count);
+      text.remove_prefix(count);
+    }
+    return size_;
+  }
+
   void StreamCapture::CaptureBuffer::applyControlSequence(char command_){
     // Logger and Toolbox use CSI F/E to move between rows and CSI K to erase.
     if( command_ != 'F' and command_ != 'E' and command_ != 'K' ) return;
@@ -91,11 +132,62 @@ namespace LoggerUtils {
     static CaptureRegistry active;
     return active;
   }
+  std::streambuf** StreamCapture::ConsoleBuffer::downstreamLink(std::streambuf* buffer_){
+    auto* supervisor = dynamic_cast<StreamBufferSupervisor*>(buffer_);
+    return supervisor == nullptr ? nullptr : &supervisor->_streamBufferPtr_;
+  }
+  void StreamCapture::ConsoleBuffer::attach(std::ostream& stream_){
+    auto* link = downstreamLink(stream_.rdbuf());
+    if( link == nullptr ){
+      _downstream_ = stream_.rdbuf(this);
+      return;
+    }
+    while( auto* next = downstreamLink(*link) ) link = next;
+    _downstream_ = *link;
+    *link = this;
+  }
+  void StreamCapture::ConsoleBuffer::detach(std::ostream& stream_){
+    if( stream_.rdbuf() == this ){
+      stream_.rdbuf(_downstream_);
+      return;
+    }
+    for( auto* link = downstreamLink(stream_.rdbuf()); link != nullptr; link = downstreamLink(*link) ){
+      if( *link == this ){
+        *link = _downstream_;
+        return;
+      }
+    }
+  }
+  StreamCapture::ConsoleBuffer::int_type StreamCapture::ConsoleBuffer::overflow(int_type value_){
+    if( traits_type::eq_int_type(value_, traits_type::eof()) ) return traits_type::not_eof(value_);
+    const auto c = traits_type::to_char_type(value_);
+    return xsputn(&c, 1) == 1 ? value_ : traits_type::eof();
+  }
+  std::streamsize StreamCapture::ConsoleBuffer::xsputn(const char* data_, std::streamsize size_){
+    auto& active = registry();
+    std::lock_guard<std::mutex> lock(active.mutex);
+    const auto written = _downstream_ == nullptr ? size_ : _downstream_->sputn(data_, size_);
+    for( auto* capture : active.captures ){
+      const auto previousSize = capture->_buffer_.size();
+      capture->_buffer_.sputn(data_, written);
+      if( capture->_buffer_.size() != previousSize ){
+        capture->_lineCount_.store(capture->_buffer_.size(), std::memory_order_relaxed);
+      }
+    }
+    return written;
+  }
+  int StreamCapture::ConsoleBuffer::sync(){
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    return _downstream_ == nullptr ? 0 : _downstream_->pubsync();
+  }
   SIMPLE_CPP_LOGGER_INLINE StreamCapture::StreamCapture(){
     auto& active = registry();
     std::lock_guard<std::mutex> lock(active.mutex);
     active.captures.push_back(this);
-    active.hasCaptures.store(true, std::memory_order_release);
+    if( active.captures.size() == 1 ){
+      active.output.attach(std::cout);
+      active.error.attach(std::cerr);
+    }
   }
   SIMPLE_CPP_LOGGER_INLINE StreamCapture::~StreamCapture(){
     detach();
@@ -104,12 +196,30 @@ namespace LoggerUtils {
     detach();
     return _buffer_.str();
   }
+  std::vector<std::string> StreamCapture::drain(std::size_t keepLines_, std::size_t batchSize_){
+    const auto count = _lineCount_.load(std::memory_order_relaxed);
+    if( count < keepLines_ or count - keepLines_ < batchSize_ ) return {};
+    auto& active = registry();
+    std::lock_guard<std::mutex> lock(active.mutex);
+    auto lines = _buffer_.drain(keepLines_, batchSize_);
+    _lineCount_.store(_buffer_.size(), std::memory_order_relaxed);
+    return lines;
+  }
+  std::vector<std::string> StreamCapture::finishLines(){
+    detach();
+    return _buffer_.finishLines();
+  }
   SIMPLE_CPP_LOGGER_INLINE void StreamCapture::detach(){
     auto& active = registry();
     std::lock_guard<std::mutex> lock(active.mutex);
     auto& captures = active.captures;
-    captures.erase(std::remove(captures.begin(), captures.end(), this), captures.end());
-    active.hasCaptures.store(not captures.empty(), std::memory_order_release);
+    const auto entry = std::find(captures.begin(), captures.end(), this);
+    if( entry == captures.end() ) return;
+    captures.erase(entry);
+    if( captures.empty() ){
+      active.output.detach(std::cout);
+      active.error.detach(std::cerr);
+    }
   }
 }
 #endif
