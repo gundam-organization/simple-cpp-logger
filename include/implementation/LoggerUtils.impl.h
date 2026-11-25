@@ -17,6 +17,103 @@
 #include <iostream>
 #include <algorithm>
 
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+#include <charconv>
+
+namespace LoggerUtils {
+  std::string StreamCapture::CaptureBuffer::str() const{
+    std::string result;
+    for( const auto& line : _lines_ ){
+      if( &line != &_lines_.front() ) result += '\n';
+      result += line;
+    }
+    return result;
+  }
+
+  StreamCapture::CaptureBuffer::int_type StreamCapture::CaptureBuffer::overflow(int_type value_){
+    if( traits_type::eq_int_type(value_, traits_type::eof()) ) return traits_type::not_eof(value_);
+    const auto c = traits_type::to_char_type(value_);
+
+    if( _state_ == State::Escape ){
+      _state_ = c == '[' ? State::ControlSequence : State::Text;
+      if( _state_ == State::ControlSequence ) return value_;
+    }
+    if( _state_ == State::ControlSequence ){
+      if( c >= '@' and c <= '~' ){
+        applyControlSequence(c);
+        _parameters_.clear();
+        _state_ = State::Text;
+      }
+      else if( _parameters_.size() < 32 ){
+        _parameters_ += c;
+      }
+      return value_;
+    }
+
+    if( c == '\033' ) _state_ = State::Escape;
+    else if( c == '\r' ) _replaceLine_ = true;
+    else if( c == '\n' ){
+      if( ++_line_ == _lines_.size() ) _lines_.emplace_back();
+      _replaceLine_ = true;
+    }
+    else{
+      auto& line = _lines_[_line_];
+      if( _replaceLine_ ){
+        line.clear();
+        _replaceLine_ = false;
+      }
+      line += c;
+    }
+    return value_;
+  }
+
+  void StreamCapture::CaptureBuffer::applyControlSequence(char command_){
+    // Logger and Toolbox use CSI F/E to move between rows and CSI K to erase.
+    if( command_ != 'F' and command_ != 'E' and command_ != 'K' ) return;
+    std::size_t count{0};
+    std::from_chars(_parameters_.data(), _parameters_.data() + _parameters_.size(), count);
+    if( command_ == 'K' ){
+      if( count == 2 ) _lines_[_line_].clear();
+      return;
+    }
+    count = std::max(count, std::size_t{1});
+    if( command_ == 'F' ){
+      _line_ -= std::min(count, _line_);
+      _replaceLine_ = true;
+    }
+    else{
+      _line_ += std::min(count, _lines_.size() - 1 - _line_);
+      _replaceLine_ = true;
+    }
+  }
+
+  SIMPLE_CPP_LOGGER_INLINE StreamCapture::CaptureRegistry& StreamCapture::registry(){
+    static CaptureRegistry active;
+    return active;
+  }
+  SIMPLE_CPP_LOGGER_INLINE StreamCapture::StreamCapture(){
+    auto& active = registry();
+    std::lock_guard<std::mutex> lock(active.mutex);
+    active.captures.push_back(this);
+    active.hasCaptures.store(true, std::memory_order_release);
+  }
+  SIMPLE_CPP_LOGGER_INLINE StreamCapture::~StreamCapture(){
+    detach();
+  }
+  SIMPLE_CPP_LOGGER_INLINE std::string StreamCapture::finish(){
+    detach();
+    return _buffer_.str();
+  }
+  SIMPLE_CPP_LOGGER_INLINE void StreamCapture::detach(){
+    auto& active = registry();
+    std::lock_guard<std::mutex> lock(active.mutex);
+    auto& captures = active.captures;
+    captures.erase(std::remove(captures.begin(), captures.end(), this), captures.end());
+    active.hasCaptures.store(not captures.empty(), std::memory_order_release);
+  }
+}
+#endif
+
 #if defined(_WIN32)
 // Windows
 #ifndef WIN32_LEAN_AND_MEAN

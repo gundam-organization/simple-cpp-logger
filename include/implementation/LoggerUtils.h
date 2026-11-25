@@ -17,10 +17,65 @@
 #include <fstream>
 #include <iostream>
 #include <functional>
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+#include <atomic>
+#include <mutex>
+#endif
 
 
 // Header
 namespace LoggerUtils{
+
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+  // Capture explicit logger output shared across translation units.
+  class StreamCapture {
+  public:
+    SIMPLE_CPP_LOGGER_INLINE StreamCapture();
+    SIMPLE_CPP_LOGGER_INLINE ~StreamCapture();
+    SIMPLE_CPP_LOGGER_INLINE std::string finish();
+
+  private:
+    friend class StreamBufferSupervisor;
+
+    class CaptureBuffer : public std::streambuf {
+    public:
+      std::string str() const;
+
+    protected:
+      int_type overflow(int_type value_) override;
+
+    private:
+      enum class State { Text, Escape, ControlSequence };
+      void applyControlSequence(char command_);
+
+      std::vector<std::string> _lines_{1};
+      std::size_t _line_{0};
+      bool _replaceLine_{false};
+      State _state_{State::Text};
+      std::string _parameters_;
+    };
+
+    struct CaptureRegistry {
+      std::atomic<bool> hasCaptures{false};
+      std::mutex mutex;
+      std::vector<StreamCapture*> captures;
+    };
+    static SIMPLE_CPP_LOGGER_INLINE CaptureRegistry& registry();
+    SIMPLE_CPP_LOGGER_INLINE void detach();
+
+    template<typename T> static void copy(const T& value_){
+      auto& active = registry();
+      if( not active.hasCaptures.load(std::memory_order_acquire) ) return;
+      std::lock_guard<std::mutex> lock(active.mutex);
+      for( auto* capture : active.captures ){
+        capture->_stream_ << value_;
+      }
+    }
+
+    CaptureBuffer _buffer_;
+    std::ostream _stream_{&_buffer_};
+  };
+#endif
 
   class StreamBufferSupervisor : public std::streambuf {
     // An external class is need to keep track of the last char printed.
@@ -42,7 +97,7 @@ namespace LoggerUtils{
 
     void setStreamBuffer(std::streambuf* buf_){
       _streamBufferPtr_ = buf_;
-      // no buffering, overflow on every char
+      // Forward writes directly to the downstream buffer.
       setp(nullptr, nullptr);
     }
     const char& getLastChar() const { return _lastChar_; }
@@ -51,6 +106,12 @@ namespace LoggerUtils{
       _lastChar_ = char(c);
       return c;
     }
+    std::streamsize xsputn(const char* data_, std::streamsize size_) override {
+      if( size_ <= 0 ) return 0;
+      const auto written = _streamBufferPtr_ == nullptr ? size_ : _streamBufferPtr_->sputn(data_, size_);
+      if( written > 0 ) _lastChar_ = data_[written - 1];
+      return written;
+    }
 
     void openOutFileStream(const std::string& outFilePath_){
       _outFileStream_.open(outFilePath_);
@@ -58,11 +119,17 @@ namespace LoggerUtils{
     template<typename T> StreamBufferSupervisor& operator<<(const T& something){
       (*_outputStream_) << something;
       if( _outFileStream_.is_open() ) _outFileStream_ << something;
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+      StreamCapture::copy(something);
+#endif
       return *this;
     }
     StreamBufferSupervisor &operator<<(std::ostream &(*f)(std::ostream &)){
       (*_outputStream_) << f;
       if( _outFileStream_.is_open() ) _outFileStream_ << f;
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+      StreamCapture::copy(f);
+#endif
       return *this;
     }
     StreamBufferSupervisor &flush(){

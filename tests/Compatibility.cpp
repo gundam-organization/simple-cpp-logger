@@ -34,4 +34,16 @@ int main(){
     ++begin;
   }
   assert(regularCount == 3);
+
+#ifdef SIMPLE_CPP_LOGGER_COMPILED
+  supervisor->setStreamBuffer(output.rdbuf());
+  LoggerUtils::StreamCapture capture;
+  *supervisor << "heading\nprogress 10%\rprogress 100%\r\n";
+  *supervisor << "old first row\nold second row\n";
+  *supervisor << '\033' << "[" << 2 << "F" << "\033[2K";
+  *supervisor << "\033[32mnew first row\033[0m\nnew second row\n";
+  *supervisor << "done" << std::endl;
+  assert(capture.finish() == "heading\nprogress 100%\nnew first row\nnew second row\ndone\n");
+  supervisor->setStreamBuffer(std::cerr.rdbuf());
+#endif
 }
