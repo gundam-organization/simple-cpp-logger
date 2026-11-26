@@ -36,6 +36,7 @@ namespace LoggerUtils{
     SIMPLE_CPP_LOGGER_INLINE std::string finish();
     SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> drain(std::size_t keepLines_, std::size_t batchSize_);
     SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> finishLines();
+    SIMPLE_CPP_LOGGER_INLINE std::vector<std::string> snapshotLines();
 
   private:
     friend class StreamBufferSupervisor;
@@ -46,6 +47,7 @@ namespace LoggerUtils{
       std::size_t size() const { return _lines_.size(); }
       std::vector<std::string> drain(std::size_t keepLines_, std::size_t batchSize_);
       std::vector<std::string> finishLines();
+      std::vector<std::string> snapshotLines() const;
 
     protected:
       int_type overflow(int_type value_) override;

@@ -40,6 +40,10 @@ namespace LoggerUtils {
     if( _lines_.back().empty() ) _lines_.pop_back();
     return {std::make_move_iterator(_lines_.begin()), std::make_move_iterator(_lines_.end())};
   }
+  std::vector<std::string> StreamCapture::CaptureBuffer::snapshotLines() const{
+    const auto end = _lines_.back().empty() ? std::prev(_lines_.end()) : _lines_.end();
+    return {_lines_.begin(), end};
+  }
 
   std::string StreamCapture::CaptureBuffer::str() const{
     std::string result;
@@ -208,6 +212,10 @@ namespace LoggerUtils {
   std::vector<std::string> StreamCapture::finishLines(){
     detach();
     return _buffer_.finishLines();
+  }
+  std::vector<std::string> StreamCapture::snapshotLines(){
+    std::lock_guard<std::mutex> lock(registry().mutex);
+    return _buffer_.snapshotLines();
   }
   SIMPLE_CPP_LOGGER_INLINE void StreamCapture::detach(){
     auto& active = registry();
